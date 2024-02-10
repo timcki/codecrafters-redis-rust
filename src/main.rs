@@ -1,6 +1,3 @@
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-
 use anyhow::Context;
 use nom::error::{Error, ErrorKind, ParseError};
 use nom::{
@@ -9,6 +6,10 @@ use nom::{
     multi::count,
     sequence::terminated,
     IResult,
+};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
 };
 
 #[derive(Debug, Default)]
@@ -83,9 +84,9 @@ fn array(input: &[u8]) -> IResult<&[u8], Message> {
     Ok((input, Message::Array(Some(res))))
 }
 
-fn read_bytes(stream: &mut TcpStream) -> anyhow::Result<([u8; 1024], usize)> {
+async fn read_bytes(stream: &mut TcpStream) -> anyhow::Result<([u8; 1024], usize)> {
     let mut buffer = [0; 1024];
-    let bytes_read = stream.read(&mut buffer)?;
+    let bytes_read = stream.read(&mut buffer).await?;
 
     Ok((buffer, bytes_read))
 }
@@ -115,7 +116,7 @@ fn handle_message(msg: &Message, stream: &mut TcpStream) -> anyhow::Result<()> {
                                 .split("\\n")
                                 .for_each(|cmd| {
                                     println!("got {cmd}");
-                                    stream.write_all(response.as_bytes()).unwrap();
+                                    stream.try_write(response.as_bytes()).unwrap();
                                     println!("sent pong")
                                 })
                         }
@@ -134,26 +135,50 @@ fn handle_message(msg: &Message, stream: &mut TcpStream) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn main() -> anyhow::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:6379")?;
-
-    println!("accepting connections");
-
-    for stream in listener.incoming() {
-        let mut stream = stream.context("accepting connection")?;
-
-        println!("accepted new connection");
-
-        loop {
-            let (buffer, read) = read_bytes(&mut stream)?;
-            if read == 0 {
-                continue;
-            }
-            let (_, message) = parse_message(&buffer).unwrap_or_default();
-            println!("parsed message: {:?}", message);
-
-            handle_message(&message, &mut stream)?;
-        }
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:6379")
+        .await
+        .context("binding to socket")?;
+    loop {
+        let (mut stream, _addr) = listener.accept().await.context("accepting connection")?;
+        tokio::spawn(async move { process_connection(&mut stream).await.unwrap() });
     }
-    Ok(())
 }
+
+async fn process_connection(stream: &mut TcpStream) -> anyhow::Result<()> {
+    loop {
+        let (buffer, read) = read_bytes(stream).await?;
+        if read == 0 {
+            return Ok(());
+        }
+
+        let (_, message) = parse_message(&buffer).unwrap_or_default();
+        println!("parsed message: {:?}", message);
+        handle_message(&message, stream)?;
+    }
+}
+/*
+
+println!("accepting connections");
+
+for stream in listener.incoming() {
+    let mut stream = stream.context("accepting connection")?;
+
+    println!("accepted new connection");
+
+    loop {
+        let (buffer, read) = read_bytes(&mut stream)?;
+        if read == 0 {
+            continue;
+        }
+        let (_, message) = parse_message(&buffer).unwrap_or_default();
+        println!("parsed message: {:?}", message);
+
+        handle_message(&message, &mut stream)?;
+    }
+}
+Ok(())
+*/
+
+// async fn process_connection(stream: &mut TcpStream) -> anyhow::Result<()> {}
