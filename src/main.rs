@@ -2,6 +2,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 
 use anyhow::Context;
+use nom::error::{Error, ErrorKind, ParseError};
 use nom::{
     bytes::complete::take,
     character::complete::{crlf, not_line_ending},
@@ -10,8 +11,11 @@ use nom::{
     IResult,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 enum Message {
+    #[default]
+    Null,
+
     SimpleString(Vec<u8>), // +<data>\r\n
     Error(Vec<u8>),        // -<data>\r\n
 
@@ -30,7 +34,10 @@ fn parse_message(buffer: &[u8]) -> IResult<&[u8], Message> {
         b':' => integer(buffer),
         b'$' => bulk_string(buffer),
         b'*' => array(buffer),
-        _ => panic!("Invalid message type"),
+        _ => Err(nom::Err::Error(Error::from_error_kind(
+            buffer,
+            ErrorKind::Tag,
+        ))),
     }
 }
 
@@ -117,11 +124,13 @@ fn handle_message(msg: &Message, stream: &mut TcpStream) -> anyhow::Result<()> {
                     }
                     Message::Array(_) => todo!(),
                     Message::Error(_) => todo!(),
+                    Message::Null => {}
                 }
             }
         }
         Message::Array(None) => println!("Received empty array"),
-        Message::Error(val) => todo!(), //println("Received error: {}", val),
+        Message::Error(val) => todo!(),
+        Message::Null => {} //println("Received error: {}", val),
     }
 
     Ok(())
