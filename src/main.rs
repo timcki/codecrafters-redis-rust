@@ -83,13 +83,11 @@ fn array(input: &[u8]) -> IResult<&[u8], Message> {
     Ok((input, Message::Array(Some(res))))
 }
 
-fn read_bytes(stream: &mut TcpStream) -> anyhow::Result<[u8; 1024]> {
+fn read_bytes(stream: &mut TcpStream) -> anyhow::Result<([u8; 1024], usize)> {
     let mut buffer = [0; 1024];
     let bytes_read = stream.read(&mut buffer)?;
 
-    println!("Received {} bytes from the client.", bytes_read);
-
-    Ok(buffer)
+    Ok((buffer, bytes_read))
 }
 
 fn handle_message(msg: &Message, stream: &mut TcpStream) -> anyhow::Result<()> {
@@ -146,10 +144,16 @@ fn main() -> anyhow::Result<()> {
 
         println!("accepted new connection");
 
-        let buffer = read_bytes(&mut stream)?;
-        let (_, message) = parse_message(&buffer).unwrap();
+        loop {
+            let (buffer, read) = read_bytes(&mut stream)?;
+            if read == 0 {
+                continue;
+            }
+            let (_, message) = parse_message(&buffer).unwrap_or_default();
+            println!("parsed message: {:?}", message);
 
-        handle_message(&message, &mut stream)?;
+            handle_message(&message, &mut stream)?;
+        }
     }
     Ok(())
 }
